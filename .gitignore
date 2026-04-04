@@ -9,4 +9,4 @@ build/
 *.wav
 *.mp4
 *.tsv
-/cache
+cache/
