@@ -1,12 +1,12 @@
 import numpy as np
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
+
 
 class TestPredictFromHtml:
-    @patch("service.brain_analysis.shutil.rmtree")
     @patch("service.brain_analysis.clean_text", return_value="cleaned text")
     @patch("service.brain_analysis._get_model")
-    def test_returns_preds_and_segments(self, mock_get_model, mock_clean, mock_rmtree):
+    def test_returns_preds_and_segments(self, mock_get_model, mock_clean):
         mock_model = MagicMock()
         mock_model.get_events_dataframe.return_value = MagicMock()
         mock_model.predict.return_value = (np.zeros((3, 20484)), ["seg1", "seg2", "seg3"])
@@ -22,72 +22,18 @@ class TestPredictFromHtml:
         assert preds.shape == (3, 20484)
         assert len(segments) == 3
 
-    @patch("service.brain_analysis.shutil.rmtree")
-    @patch("service.brain_analysis.clean_text", return_value="cleaned text")
-    @patch("service.brain_analysis._get_model")
-    def test_cleans_up_tmpdir_on_success(self, mock_get_model, mock_clean, mock_rmtree):
-        mock_model = MagicMock()
-        mock_model.predict.return_value = (np.zeros((1, 10)), ["seg"])
-        mock_get_model.return_value = mock_model
-
-        from service.brain_analysis import predict_from_html
-
-        predict_from_html("<p>test</p>")
-
-        mock_rmtree.assert_called_once()
-        assert mock_model.cache_folder == "./cache"
-
-    @patch("service.brain_analysis.shutil.rmtree")
-    @patch("service.brain_analysis.clean_text", return_value="cleaned text")
-    @patch("service.brain_analysis._get_model")
-    def test_cleans_up_tmpdir_on_failure(self, mock_get_model, mock_clean, mock_rmtree):
-        mock_model = MagicMock()
-        mock_model.predict.side_effect = RuntimeError("inference failed")
-        mock_get_model.return_value = mock_model
-
-        from service.brain_analysis import predict_from_html
-
-        with pytest.raises(RuntimeError, match="inference failed"):
-            predict_from_html("<p>test</p>")
-
-        mock_rmtree.assert_called_once()
-        assert mock_model.cache_folder == "./cache"
-
-    @patch("service.brain_analysis.shutil.rmtree")
-    @patch("service.brain_analysis.clean_text", return_value="cleaned text")
-    @patch("service.brain_analysis._get_model")
-    def test_sets_cache_folder_to_tmpdir(self, mock_get_model, mock_clean, mock_rmtree):
-        cache_folders = []
-        mock_model = MagicMock()
-
-        def capture_cache(*args, **kwargs):
-            cache_folders.append(mock_model.cache_folder)
-            return MagicMock()
-
-        mock_model.get_events_dataframe.side_effect = capture_cache
-        mock_model.predict.return_value = (np.zeros((1, 10)), ["seg"])
-        mock_get_model.return_value = mock_model
-
-        from service.brain_analysis import predict_from_html
-
-        predict_from_html("<p>test</p>")
-
-        # cache_folder was set to a tmpdir during inference, not ./cache
-        assert len(cache_folders) == 1
-        assert cache_folders[0] != "./cache"
-
 
 class TestInsertDataToDb:
     @pytest.mark.asyncio
-    @patch("service.brain_analysis.get_mongo_write_client")
-    async def test_inserts_correct_docs(self, mock_get_client):
-        mock_collection = AsyncMock()
-        mock_collection.insert_many.return_value = MagicMock(inserted_ids=["id1", "id2"])
-        mock_db = MagicMock()
-        mock_db.__getitem__ = MagicMock(return_value=mock_collection)
-        mock_client = MagicMock()
-        mock_client.__getitem__ = MagicMock(return_value=mock_db)
-        mock_get_client.return_value = mock_client
+    @patch("service.brain_analysis.get_supabase_client")
+    async def test_inserts_correct_rows(self, mock_get_sb):
+        mock_table = MagicMock()
+        mock_table.insert.return_value.execute.return_value = MagicMock(
+            data=[{"id": 1}, {"id": 2}]
+        )
+        mock_sb = MagicMock()
+        mock_sb.table.return_value = mock_table
+        mock_get_sb.return_value = mock_sb
 
         from service.brain_analysis import insert_data_to_db
 
@@ -97,23 +43,24 @@ class TestInsertDataToDb:
 
         result = await insert_data_to_db(preds, [seg1, seg2], "test_source", "user1")
 
-        mock_collection.insert_many.assert_called_once()
-        docs = mock_collection.insert_many.call_args[0][0]
-        assert len(docs) == 2
-        assert docs[0]["user_id"] == "user1"
-        assert docs[0]["source"] == "test_source"
-        assert docs[0]["timepoint"] == 0.0
-        assert docs[0]["activations"] == [0.1, 0.2]
-        assert result == ["id1", "id2"]
+        mock_sb.table.assert_called_once_with("predictions")
+        mock_table.insert.assert_called_once()
+        rows = mock_table.insert.call_args[0][0]
+        assert len(rows) == 2
+        assert rows[0]["user_id"] == "user1"
+        assert rows[0]["raw_text"] == "test_source"
+        assert rows[0]["timepoint"] == 0.0
+        assert rows[0]["activations"] == [0.1, 0.2]
+        assert len(result) == 2
 
 
 class TestSaveBrainAnalysisResults:
     @pytest.mark.asyncio
-    @patch("service.brain_analysis.insert_data_to_db", new_callable=AsyncMock)
+    @patch("service.brain_analysis.insert_data_to_db")
     @patch("service.brain_analysis.predict_from_html")
     async def test_text_pipeline(self, mock_predict, mock_insert):
         mock_predict.return_value = (np.zeros((2, 10)), ["s1", "s2"])
-        mock_insert.return_value = ["id1", "id2"]
+        mock_insert.return_value = [{"id": 1}, {"id": 2}]
 
         from service.brain_analysis import save_brain_analysis_results
 

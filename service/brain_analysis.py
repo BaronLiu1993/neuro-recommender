@@ -1,43 +1,25 @@
-import asyncio
-
-from pymongo import AsyncMongoClient
-from tribev2.tribev2 import TribeModel
-from dotenv import load_dotenv
-from service.text_processing import clean_text
-import os
 import logging
+
+from tribev2 import TribeModel
+from text_processing import clean_text
+from service.supabase_client import get_supabase_client
 import spacy
 
-load_dotenv()
-
-# MongoDB connection
-mongo_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
 _model = None
 
-# Get the model instance (singleton pattern)
 def _get_model():
     global _model
     if _model is None:
-        _model = TribeModel.from_pretrained("facebook/tribev2", cache_folder="./cache")
+        _model = TribeModel.from_pretrained(
+            "facebook/tribev2",
+            cache_folder="./cache",
+            config_update={"data.num_workers": 0},
+        )
     return _model
 
-# Get the MongoDB client
-def get_mongo_write_client():
-    uri = mongo_uri
-    client = AsyncMongoClient(uri, readPreference="secondary")
-    return client
-
-def get_mongo_read_client():
-    uri = mongo_uri
-    client = AsyncMongoClient(uri, readPreference="secondary")
-    return client
-
 async def insert_data_to_db(preds, segments, text, user_id):
-    client = get_mongo_write_client()
-    db = client["neuro"]
-    collection = db["predictions"]
-    print(preds)
-    docs = [
+    sb = get_supabase_client()
+    rows = [
         {
             "user_id": user_id,
             "raw_text": text,
@@ -47,25 +29,14 @@ async def insert_data_to_db(preds, segments, text, user_id):
         }
         for i in range(len(segments))
     ]
-    result = await collection.insert_many(docs)
-    print(result.inserted_ids)
-    return result.inserted_ids
+    result = sb.table("predictions").insert(rows).execute()
+    return result.data
 
 def extract_proper_noun(text, user_id):
-    client = get_mongo_write_client()
-    db = client["neuro"]
-    collection = db["user_data"]
     nlp = spacy.load("en_core_web_sm")
     doc = nlp(text)
     proper_nouns = [token.text for token in doc if token.pos_ == "PROPN"]
-    print(f"Extracted proper nouns: {proper_nouns}")
-    """
-    collection.update_one(
-        {"_id": user_id}, 
-        {"$addToSet": {"proper_nouns": {"$each": proper_nouns}}},
-        upsert=True
-    )
-    """
+    logging.info(f"Extracted proper nouns: {proper_nouns}")
     
 def predict_from_html(raw_html):
     model = _get_model()
