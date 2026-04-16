@@ -7,7 +7,7 @@ name = "tribev2"
 version = "0.1.0"
 description = "Deep multimodal brain encoding"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 license = {file = "LICENSE"}
 authors = [{name = "Meta Platforms, Inc."}]
 
@@ -15,7 +15,7 @@ dependencies = [
   "neuralset==0.0.2",
   "neuraltrain==0.0.2",
   "torch>=2.5.1",
-  "numpy>=2.2.6",
+  "numpy>=2.0.0",
   "torchvision>=0.20",
   "x_transformers==1.27.20",
   "einops",
